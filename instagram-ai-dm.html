@@ -421,6 +421,9 @@ function svg(icon,cls=''){return`<span class="nav-icon ${cls}" style="display:fl
 // ═══════════════════════════════════════════════════
 const SK='ig-clone-v5';
 const AI_SK='ig-ai-settings-v1';
+const DB_NAME='ig-clone-db';
+const DB_VERSION=1;
+const DB_STORE='kv';
 
 // ═══════════════════════════════════════════════════
 // AI SETTINGS — stored separately so they persist cleanly
@@ -431,15 +434,75 @@ let aiSettings={
   enabledConvs:{},// {convId: true/false}
 };
 
-function loadAISettings(){
+let dbPromise=null;
+function getDB(){
+  if(dbPromise)return dbPromise;
+  dbPromise=new Promise((resolve,reject)=>{
+    const req=indexedDB.open(DB_NAME,DB_VERSION);
+    req.onupgradeneeded=()=>{
+      const db=req.result;
+      if(!db.objectStoreNames.contains(DB_STORE))db.createObjectStore(DB_STORE);
+    };
+    req.onsuccess=()=>resolve(req.result);
+    req.onerror=()=>reject(req.error);
+  });
+  return dbPromise;
+}
+async function dbGet(key){
   try{
-    const raw=localStorage.getItem(AI_SK);
+    const db=await getDB();
+    return await new Promise((resolve,reject)=>{
+      const tx=db.transaction(DB_STORE,'readonly');
+      const req=tx.objectStore(DB_STORE).get(key);
+      req.onsuccess=()=>resolve(req.result);
+      req.onerror=()=>reject(req.error);
+    });
+  }catch(e){
+    console.warn('IndexedDB read failed:',e);
+    return null;
+  }
+}
+async function dbSet(key,val){
+  try{
+    const db=await getDB();
+    await new Promise((resolve,reject)=>{
+      const tx=db.transaction(DB_STORE,'readwrite');
+      tx.oncomplete=()=>resolve();
+      tx.onerror=()=>reject(tx.error);
+      tx.objectStore(DB_STORE).put(val,key);
+    });
+  }catch(e){
+    console.warn('IndexedDB write failed:',e);
+  }
+}
+async function dbDelete(key){
+  try{
+    const db=await getDB();
+    await new Promise((resolve,reject)=>{
+      const tx=db.transaction(DB_STORE,'readwrite');
+      tx.oncomplete=()=>resolve();
+      tx.onerror=()=>reject(tx.error);
+      tx.objectStore(DB_STORE).delete(key);
+    });
+  }catch(e){
+    console.warn('IndexedDB delete failed:',e);
+  }
+}
+
+async function loadAISettings(){
+  try{
+    let raw=await dbGet(AI_SK);
+    if(!raw){
+      raw=localStorage.getItem(AI_SK);
+      if(raw){
+        await dbSet(AI_SK,raw);
+        localStorage.removeItem(AI_SK);
+      }
+    }
     if(raw)Object.assign(aiSettings,JSON.parse(raw));
   }catch{}
 }
-function saveAISettings(){
-  try{localStorage.setItem(AI_SK,JSON.stringify(aiSettings));}catch{}
-}
+function saveAISettings(){void dbSet(AI_SK,JSON.stringify(aiSettings));}
 function getOllamaBase(){return`http://localhost:${aiSettings.port||'11434'}`;}
 function isAIEnabled(convId){return!!aiSettings.enabledConvs[convId];}
 
@@ -509,9 +572,16 @@ function resizeImage(file, maxW=1080, quality=0.88){
 // ═══════════════════════════════════════════════════
 // STORAGE
 // ═══════════════════════════════════════════════════
-function hydrate(){
+async function hydrate(){
   try{
-    const raw=localStorage.getItem(SK);
+    let raw=await dbGet(SK);
+    if(!raw){
+      raw=localStorage.getItem(SK);
+      if(raw){
+        await dbSet(SK,raw);
+        localStorage.removeItem(SK);
+      }
+    }
     if(!raw)return;
     const d=JSON.parse(raw);
     Object.assign(S,d);
@@ -521,17 +591,19 @@ function hydrate(){
     if(!Array.isArray(S.saved))S.saved=[];
     if(!S.dms||typeof S.dms!=='object')S.dms={};
     if(!Array.isArray(S.storySeenIds))S.storySeenIds=[];
-  }catch{localStorage.removeItem(SK);}
+  }catch{
+    await dbDelete(SK);
+    localStorage.removeItem(SK);
+  }
 }
 
 function persist(){
-  try{localStorage.setItem(SK,JSON.stringify(S));}
-  catch(e){console.warn('Storage full:',e);}
+  void dbSet(SK,JSON.stringify(S));
 }
 
-function init(){
-  hydrate();
-  loadAISettings();
+async function init(){
+  await hydrate();
+  await loadAISettings();
   S.accounts=S.accounts.filter(a=>!a.fake);
   if(S.activeId&&!S.accounts.find(a=>a.id===S.activeId)){S.activeId=null;}
   if(!S.activeId&&S.accounts.length>0){S.activeId=S.accounts[0].id;}
@@ -1785,7 +1857,14 @@ function setView(v){
   persist();render();
 }
 function viewProfile(id){S.profileId=id;S.view='profile';persist();render();}
-function resetData(){if(!confirm('Reset all data? This cannot be undone.'))return;localStorage.removeItem(SK);localStorage.removeItem(AI_SK);location.reload();}
+function resetData(){
+  if(!confirm('Reset all data? This cannot be undone.'))return;
+  void Promise.all([dbDelete(SK),dbDelete(AI_SK)]).finally(()=>{
+    localStorage.removeItem(SK);
+    localStorage.removeItem(AI_SK);
+    location.reload();
+  });
+}
 
 // ═══════════════════════════════════════════════════
 // BOOT
