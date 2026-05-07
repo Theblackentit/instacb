@@ -469,15 +469,21 @@ let S={
 const uid=()=>crypto.randomUUID();
 const esc=s=>String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 const URL_RE=/https?:\/\/[^\s<>()]+|www\.[^\s<>()]+/gi;
+const FILE_PATH_RE=/file:\/\/[^\s<>()]+|[A-Za-z]:\\[^\s<>()]+|(?:\.{1,2}\/|\/)[^\s<>()]+/gi;
+const INLINE_LINK_RE=/\[([^\]\n]+)\]\(([^)\n]+)\)/g;
 
-function normalizeUrl(raw){
-  let url=String(raw||'').trim().replace(/[.,!?;:]+$/,'');
+function stripTrailingPunctuation(raw){
+  return String(raw||'').trim().replace(/[.,!?;:]+$/,'');
+}
+
+function normalizeWebUrl(raw){
+  let url=stripTrailingPunctuation(raw);
   if(/^www\./i.test(url))url=`https://${url}`;
   return url;
 }
 
-function safeUrl(raw){
-  const url=normalizeUrl(raw);
+function safeWebUrl(raw){
+  const url=normalizeWebUrl(raw);
   try{
     const u=new URL(url);
     if(!['http:','https:'].includes(u.protocol))return'';
@@ -485,20 +491,72 @@ function safeUrl(raw){
   }catch{return'';}
 }
 
-function linkifyBioText(text){
+function filePathToHref(raw){
+  const path=stripTrailingPunctuation(raw);
+  if(/^file:\/\//i.test(path)){
+    try{
+      const u=new URL(path);
+      return u.protocol==='file:'?u.href:'';
+    }catch{return'';}
+  }
+  if(/^[A-Za-z]:\\/.test(path)){
+    return encodeURI(`file:///${path.replace(/\\/g,'/')}`);
+  }
+  if(/^\//.test(path)){
+    return encodeURI(`file://${path}`);
+  }
+  if(/^\.{1,2}\//.test(path)){
+    return encodeURI(path);
+  }
+  return'';
+}
+
+function safeBioHref(raw){
+  return safeWebUrl(raw)||filePathToHref(raw);
+}
+
+function renderBioAnchor(label,href){
+  return`<a class="bio-link" href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>`;
+}
+
+function linkifyPlainBioSegment(text){
+  const matches=[];
   URL_RE.lastIndex=0;
-  let out='',last=0,match;
+  FILE_PATH_RE.lastIndex=0;
+  let match;
   while((match=URL_RE.exec(text))){
-    out+=esc(text.slice(last,match.index));
-    const url=safeUrl(match[0]);
-    out+=url?`<a class="bio-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(match[0])}</a>`:esc(match[0]);
+    const href=safeWebUrl(match[0]);
+    if(href)matches.push({index:match.index,end:match.index+match[0].length,label:match[0],href});
+  }
+  while((match=FILE_PATH_RE.exec(text))){
+    const href=filePathToHref(match[0]);
+    if(href)matches.push({index:match.index,end:match.index+match[0].length,label:match[0],href});
+  }
+  matches.sort((a,b)=>a.index-b.index||b.end-a.end);
+  let out='',cursor=0;
+  for(const m of matches){
+    if(m.index<cursor)continue;
+    out+=esc(text.slice(cursor,m.index));
+    out+=renderBioAnchor(m.label,m.href);
+    cursor=m.end;
+  }
+  return out+esc(text.slice(cursor));
+}
+
+function linkifyBioText(text){
+  INLINE_LINK_RE.lastIndex=0;
+  let out='',last=0,match;
+  while((match=INLINE_LINK_RE.exec(text))){
+    out+=linkifyPlainBioSegment(text.slice(last,match.index));
+    const href=safeBioHref(match[2]);
+    out+=href?renderBioAnchor(match[1],href):esc(match[0]);
     last=match.index+match[0].length;
   }
-  return out+esc(text.slice(last));
+  return out+linkifyPlainBioSegment(text.slice(last));
 }
 
 function getBioEmbed(rawUrl){
-  const url=safeUrl(rawUrl);
+  const url=safeWebUrl(rawUrl);
   if(!url)return null;
   const u=new URL(url);
   const host=u.hostname.replace(/^www\./,'').toLowerCase();
@@ -1738,7 +1796,7 @@ function openSettingsModal(){
           <input class="new-acc-input" id="new-username" placeholder="Username (e.g. john_doe)" maxlength="24">
           <input class="new-acc-input" id="new-displayname" placeholder="Display name (e.g. John Doe)">
           <textarea class="new-acc-input" id="new-bio" placeholder="Bio — paste links or supported embeds on their own line" rows="3" style="resize:none"></textarea>
-          <div class="settings-hint">URLs become clickable. YouTube, Vimeo, Spotify, and SoundCloud links on their own line become embeds.</div>
+          <div class="settings-hint">URLs and file paths become clickable. Use [words](link-or-file-path) to make custom blue text. YouTube, Vimeo, Spotify, and SoundCloud links on their own line become embeds.</div>
           <button class="new-acc-btn" onclick="addNewAccount()">➕ Create Account</button>
         </div>
       </div>
@@ -1798,7 +1856,7 @@ function openEditProfileModal(){
         <input class="settings-input" id="edit-displayname" value="${esc(acc.displayName||'')}">
         <div class="settings-label" style="margin-top:14px">Bio</div>
         <textarea class="settings-input" id="edit-bio" rows="4" style="resize:none">${esc(acc.bio||'')}</textarea>
-        <div class="settings-hint">URLs become clickable. Put a YouTube, Vimeo, Spotify, or SoundCloud link on its own line, or prefix it with <code>embed:</code>, to show an embed.</div>
+        <div class="settings-hint">URLs and file paths become clickable. Use <code>[words](link-or-file-path)</code> to make custom blue text. Put a YouTube, Vimeo, Spotify, or SoundCloud link on its own line, or prefix it with <code>embed:</code>, to show an embed.</div>
         <button class="settings-save" style="margin-top:16px" onclick="saveProfileEdit('${acc.id}')">Save</button>
       </div>
     </div>
