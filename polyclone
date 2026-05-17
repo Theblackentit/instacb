@@ -1668,7 +1668,7 @@ code {
 
       <div class="scard">
         <div class="stitle">Data Management</div>
-        <div class="sdesc">Export a backup or import a previous session. All data is stored locally in your browser.</div>
+        <div class="sdesc">Export a backup or import a previous session. All data is stored locally in your browser's IndexedDB.</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn-s" onclick="exportData()" style="padding:8px 18px;font-size:12.5px">⬇ Export Backup</button>
           <button class="btn-s" onclick="document.getElementById('importFile').click()" style="padding:8px 18px;font-size:12.5px">⬆ Import Backup</button>
@@ -1682,7 +1682,7 @@ code {
       <div class="scard">
         <div class="stitle">About PolyChat</div>
         <div class="sdesc" style="margin-bottom:0">
-          PolyChat is a privacy-first AI character chat app. All your conversations, characters, and data are stored locally in your browser — nothing is sent to any server except your local Ollama instance.
+          PolyChat is a privacy-first AI character chat app. All your conversations, characters, and data are stored locally in your browser's IndexedDB — nothing is sent to any server except your local Ollama instance.
           <br><br>
           <strong style="color:var(--t1)">Getting started:</strong> Install <a href="https://ollama.ai" target="_blank" style="color:var(--a1);text-decoration:none">Ollama</a>, run <code>OLLAMA_ORIGINS=* ollama serve</code>, then pull a model with <code>ollama pull llama3.2</code>.
         </div>
@@ -1714,14 +1714,73 @@ const S = {
 /* ═══════════════════════════════════════════
    STORAGE
 ═══════════════════════════════════════════ */
-function load() {
-  S.chars = JSON.parse(localStorage.getItem('pc_chars') || '[]');
-  S.convos = JSON.parse(localStorage.getItem('pc_convos') || '[]');
-  S.model = localStorage.getItem('pc_model') || '';
-  S.url = localStorage.getItem('pc_url') || 'http://localhost:11434';
+const DB_NAME = 'polychat';
+const DB_VERSION = 1;
+const DB_STORE = 'app_state';
+let dbPromise = null;
+
+function openDb() {
+  if (!('indexedDB' in window)) {
+    return Promise.reject(new Error('IndexedDB is not available in this browser'));
+  }
+  if (dbPromise) return dbPromise;
+  dbPromise = new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(DB_STORE)) {
+        db.createObjectStore(DB_STORE, {keyPath:'key'});
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error || new Error('Unable to open IndexedDB'));
+    req.onblocked = () => reject(new Error('IndexedDB upgrade blocked by another open PolyChat tab'));
+  });
+  return dbPromise;
 }
-function saveChars() { localStorage.setItem('pc_chars', JSON.stringify(S.chars)); }
-function saveConvos() { localStorage.setItem('pc_convos', JSON.stringify(S.convos)); }
+
+async function idbGet(key, fallback) {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(DB_STORE, 'readonly');
+    const req = tx.objectStore(DB_STORE).get(key);
+    req.onsuccess = () => resolve(req.result ? req.result.value : fallback);
+    req.onerror = () => reject(req.error || new Error('Unable to read ' + key));
+  });
+}
+
+async function idbSet(key, value) {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(DB_STORE, 'readwrite');
+    tx.objectStore(DB_STORE).put({key, value});
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error || new Error('Unable to save ' + key));
+    tx.onabort = () => reject(tx.error || new Error('Unable to save ' + key));
+  });
+}
+
+function reportStorageError(err) {
+  console.error(err);
+  toast('IndexedDB save failed — your latest changes may not persist', 'err');
+}
+
+async function load() {
+  const [chars, convos, model, url] = await Promise.all([
+    idbGet('pc_chars', []),
+    idbGet('pc_convos', []),
+    idbGet('pc_model', ''),
+    idbGet('pc_url', 'http://localhost:11434')
+  ]);
+  S.chars = Array.isArray(chars) ? chars : [];
+  S.convos = Array.isArray(convos) ? convos : [];
+  S.model = model || '';
+  S.url = url || 'http://localhost:11434';
+}
+function saveChars() { return idbSet('pc_chars', S.chars).catch(reportStorageError); }
+function saveConvos() { return idbSet('pc_convos', S.convos).catch(reportStorageError); }
+function saveModel() { return idbSet('pc_model', S.model).catch(reportStorageError); }
+function saveUrl() { return idbSet('pc_url', S.url).catch(reportStorageError); }
 
 /* ═══════════════════════════════════════════
    UTILS
@@ -2440,7 +2499,7 @@ async function loadModels() {
     ).join('') || '<option value="">No models — run: ollama pull llama3.2</option>';
     if (!S.model && S.models.length) {
       S.model = S.models[0];
-      localStorage.setItem('pc_model', S.model);
+      saveModel();
     }
     if (st) { st.textContent = '● Online'; st.style.color = '#4ade80'; }
   } catch {
@@ -2450,7 +2509,7 @@ async function loadModels() {
 }
 function onModelChange() {
   S.model = document.getElementById('modelSel').value;
-  localStorage.setItem('pc_model', S.model);
+  saveModel();
 }
 
 async function checkConnStatus() {
@@ -2489,7 +2548,7 @@ async function testConn() {
 }
 function saveSettings() {
   S.url = document.getElementById('urlIn').value.trim() || 'http://localhost:11434';
-  localStorage.setItem('pc_url', S.url);
+  saveUrl();
   toast('Settings saved!', 'ok');
   checkConnStatus();
 }
@@ -2499,7 +2558,7 @@ function updateStorageInfo() {
   const chars = S.chars.length;
   const convos = S.convos.length;
   const msgs = S.convos.reduce((a,c) => a + c.messages.length, 0);
-  el.textContent = `${chars} character${chars!==1?'s':''} · ${convos} conversation${convos!==1?'s':''} · ${msgs} message${msgs!==1?'s':''} stored locally`;
+  el.textContent = `${chars} character${chars!==1?'s':''} · ${convos} conversation${convos!==1?'s':''} · ${msgs} message${msgs!==1?'s':''} stored locally in IndexedDB`;
 }
 
 /* ═══════════════════════════════════════════
@@ -2530,8 +2589,8 @@ function confirmClearAll() {
     'Clear All Data?',
     'This will permanently delete all characters, conversations, and settings. This cannot be undone.',
     () => {
-      S.chars = []; S.convos = [];
-      saveChars(); saveConvos();
+      S.chars = []; S.convos = []; S.model = ''; S.url = 'http://localhost:11434';
+      saveChars(); saveConvos(); saveModel(); saveUrl();
       toast('All data cleared');
       showView('home');
     }
@@ -2587,9 +2646,17 @@ function seedDefaults() {
 /* ═══════════════════════════════════════════
    INIT
 ═══════════════════════════════════════════ */
-load();
-seedDefaults();
-showView('home');
+async function init() {
+  try {
+    await load();
+    seedDefaults();
+    showView('home');
+  } catch(err) {
+    console.error(err);
+    toast('Unable to open IndexedDB. PolyChat cannot save data in this browser.', 'err');
+  }
+}
+init();
 </script>
 </body>
 </html>
