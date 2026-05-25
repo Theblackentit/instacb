@@ -2021,27 +2021,49 @@
   }
 
   function closeFullscreen() {
+    const mediaEl = document.getElementById('fs-img');
+    if (mediaEl && mediaEl.tagName === 'VIDEO') mediaEl.pause();
     document.getElementById('fullscreen-viewer').classList.remove('open');
   }
 
   function renderFSImage() {
-    const img     = document.getElementById('fs-img');
+    const currentEl = document.getElementById('fs-img');
     const counter = document.getElementById('fs-counter');
+    const current = detailImages[fsIndex]?.imageUrl;
+    if (!currentEl || !current) return;
 
-    img.classList.add('fading');
+    currentEl.classList.add('fading');
     setTimeout(() => {
-      const current = detailImages[fsIndex].imageUrl;
-      if (isVideoUrl(current)) {
-        img.outerHTML = `<video id="fs-img" class="fading" autoplay controls loop muted playsinline></video>`;
-        const v = document.getElementById("fs-img");
-        v.src = current;
-      } else {
-        if (img.tagName !== "IMG") {
-          img.outerHTML = `<img id="fs-img" class="fading" src="" alt="fullscreen" />`;
+      const latestEl = document.getElementById('fs-img');
+      if (!latestEl) return;
+
+      const needsVideo = isVideoUrl(current);
+      const hasVideo   = latestEl.tagName === 'VIDEO';
+      let mediaEl      = latestEl;
+
+      if (needsVideo !== hasVideo) {
+        if (hasVideo) latestEl.pause();
+        const replacement = document.createElement(needsVideo ? 'video' : 'img');
+        replacement.id = 'fs-img';
+        replacement.className = 'fading';
+        if (needsVideo) {
+          replacement.autoplay = true;
+          replacement.controls = true;
+          replacement.loop = true;
+          replacement.muted = true;
+          replacement.playsInline = true;
+        } else {
+          replacement.alt = 'fullscreen';
         }
-        document.getElementById("fs-img").src = current;
+        latestEl.replaceWith(replacement);
+        mediaEl = replacement;
       }
-      img.classList.remove('fading');
+
+      mediaEl.src = current;
+      if (mediaEl.tagName === 'VIDEO') {
+        mediaEl.play().catch(() => {});
+      }
+      mediaEl.classList.remove('fading');
     }, 180);
 
     counter.textContent = `${fsIndex + 1} / ${detailImages.length}`;
