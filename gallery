@@ -261,7 +261,8 @@
       z-index: 2;
       border: 1px solid rgba(200,255,0,0.2);
     }
-    #crop-preview-img {
+    #crop-preview-img,
+    #crop-preview-video {
       width: 100%;
       height: 100%;
       object-fit: cover;
@@ -421,12 +422,13 @@
     .masonry-item:hover::after { background: rgba(200,255,0,0.08); }
     .masonry-item:hover { border-color: var(--lime); }
 
-    .masonry-item img {
+    .masonry-item img,
+    .masonry-item video {
       width: 100%;
       display: block;
       transition: transform 0.4s ease;
     }
-    .masonry-item:hover img { transform: scale(1.04); }
+    .masonry-item:hover img, .masonry-item:hover video { transform: scale(1.04); }
 
     /* ─── Fullscreen Viewer ────────────────────────────────────────────── */
     #fullscreen-viewer {
@@ -442,6 +444,15 @@
     #fullscreen-viewer.open { display: flex; }
 
     #fs-img {
+      max-width: 95vw;
+      max-height: 88vh;
+      object-fit: contain;
+      border: 1px solid var(--border);
+      box-shadow: 0 20px 80px rgba(0,0,0,0.8);
+      transition: opacity 0.2s ease;
+    }
+
+    #fullscreen-viewer video#fs-img {
       max-width: 92vw;
       max-height: 88vh;
       object-fit: contain;
@@ -1364,7 +1375,8 @@
           <!-- Basic info -->
           <div style="display:flex;flex-direction:column;gap:0.4rem;margin-bottom:0.75rem;">
             <input class="edit-input" id="edit-char-name" type="text" placeholder="Character Name" />
-            <input class="edit-input" id="edit-char-portrait" type="text" placeholder="Portrait URL" />
+            <input class="edit-input" id="edit-char-portrait" type="text" placeholder="Portrait URL (image or .mp4)" />
+            <input class="edit-input" id="edit-char-portrait-file" type="file" accept="image/*,video/mp4" onchange="uploadPortraitFile(event)" />
             <div style="display:flex;gap:0.4rem;">
               <button class="edit-btn edit-btn-lime" style="flex:1;" onclick="saveCharacterEdit()">SAVE</button>
               <button class="edit-btn edit-btn-cyan" onclick="openCropModal()">⊹ CROP</button>
@@ -1401,9 +1413,10 @@
 
           <!-- Add Images -->
           <div style="margin-bottom:0.75rem;">
-            <div style="font-family:var(--font-mono);font-size:0.65rem;color:var(--muted);letter-spacing:0.1em;margin-bottom:0.4rem;">ADD IMAGES (one URL per line)</div>
+            <div style="font-family:var(--font-mono);font-size:0.65rem;color:var(--muted);letter-spacing:0.1em;margin-bottom:0.4rem;">ADD GALLERY MEDIA (one URL per line, image or .mp4)</div>
             <textarea class="edit-input" id="new-img-urls" rows="4" placeholder="https://example.com/image1.jpg&#10;https://example.com/image2.jpg" style="resize:vertical;"></textarea>
-            <button class="edit-btn edit-btn-cyan" style="width:100%;margin-top:0.4rem;" onclick="addImages()">+ ADD IMAGES</button>
+            <button class="edit-btn edit-btn-cyan" style="width:100%;margin-top:0.4rem;" onclick="addImages()">+ ADD URLS</button>
+            <input class="edit-input" id="new-img-files" type="file" accept="image/*,video/mp4" multiple style="margin-top:0.4rem;" onchange="uploadGalleryFiles(event)" />
           </div>
 
           <!-- Image List -->
@@ -1452,6 +1465,7 @@
           <div style="font-family:var(--font-mono);font-size:0.6rem;color:var(--muted);letter-spacing:0.15em;margin-bottom:0.2rem;">CARD PREVIEW</div>
           <div id="crop-preview-wrap">
             <img id="crop-preview-img" src="" alt="preview" draggable="false" />
+            <video id="crop-preview-video" muted loop playsinline draggable="false" style="display:none;"></video>
           </div>
           <div style="font-family:var(--font-mono);font-size:0.55rem;color:var(--muted);text-align:center;max-width:160px;">
             DRAG TO PAN
@@ -1510,6 +1524,7 @@
     <div class="char-choice-popup">
       <div class="choice-portrait-wrap">
         <img id="choice-portrait" class="choice-portrait" src="" alt="" />
+        <video id="choice-portrait-video" class="choice-portrait" muted loop playsinline style="display:none;"></video>
       </div>
       <div id="choice-char-name" class="choice-char-name">CHARACTER</div>
       <div id="choice-char-sub" class="choice-subtitle">0 IMAGES</div>
@@ -1872,12 +1887,12 @@
     const sc    = char.portraitScale   ?? 1;
     return `
       <div class="char-card" onclick="openCharChoiceModal(${char.id})" title="${escapeHTML(char.name)}">
-        <img src="${escapeHTML(char.portraitUrl)}"
-             alt="${escapeHTML(char.name)}"
-             loading="lazy"
-             class="card-portrait"
-             style="object-position:${ox}% ${oy}%;transform:scale(${sc});transform-origin:${ox}% ${oy}%;"
-             onerror="this.src='data:image/svg+xml,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'400\\' height=\\'600\\'><rect width=\\'100%25\\' height=\\'100%25\\' fill=\\'%2318181f\\'/><text x=\\'50%25\\' y=\\'50%25\\' fill=\\'%236b6b88\\' text-anchor=\\'middle\\' dominant-baseline=\\'middle\\' font-size=\\'48\\'>?</text></svg>'" />
+        ${mediaHTML(
+          char.portraitUrl,
+          char.name,
+          "card-portrait",
+          `loading="lazy" style="object-position:${ox}% ${oy}%;transform:scale(${sc});transform-origin:${ox}% ${oy}%;" autoplay muted loop playsinline`
+        )}
         <div class="char-card-overlay">
           <div class="char-card-name">${escapeHTML(char.name)}</div>
           <div class="char-card-count">${count} IMAGE${count !== 1 ? 'S' : ''}</div>
@@ -1902,11 +1917,25 @@
     const oy = char.portraitOffsetY ?? 20;
     const sc = char.portraitScale   ?? 1;
 
-    const portEl = document.getElementById('choice-portrait');
-    portEl.src = char.portraitUrl;
-    portEl.style.objectPosition  = `${ox}% ${oy}%`;
-    portEl.style.transform       = `scale(${sc})`;
-    portEl.style.transformOrigin = `${ox}% ${oy}%`;
+    const portImg = document.getElementById('choice-portrait');
+    const portVid = document.getElementById('choice-portrait-video');
+    if (isVideoUrl(char.portraitUrl)) {
+      portImg.style.display = 'none';
+      portVid.style.display = 'block';
+      portVid.src = char.portraitUrl;
+      portVid.style.objectPosition  = `${ox}% ${oy}%`;
+      portVid.style.transform       = `scale(${sc})`;
+      portVid.style.transformOrigin = `${ox}% ${oy}%`;
+      portVid.play().catch(() => {});
+    } else {
+      portVid.style.display = 'none';
+      portVid.pause();
+      portImg.style.display = 'block';
+      portImg.src = char.portraitUrl;
+      portImg.style.objectPosition  = `${ox}% ${oy}%`;
+      portImg.style.transform       = `scale(${sc})`;
+      portImg.style.transformOrigin = `${ox}% ${oy}%`;
+    }
 
     document.getElementById('choice-char-name').textContent = char.name.toUpperCase();
 
@@ -1921,6 +1950,8 @@
   function closeCharChoice() {
     document.getElementById('char-choice-overlay').classList.remove('open');
     document.body.style.overflow = '';
+    const portVid = document.getElementById('choice-portrait-video');
+    portVid.pause();
     choiceCharId = null;
   }
 
@@ -1964,10 +1995,7 @@
     } else {
       grid.innerHTML = detailImages.map((img, idx) => `
         <div class="masonry-item" onclick="openFullscreen(${idx})">
-          <img src="${escapeHTML(img.imageUrl)}"
-               alt="Image ${idx + 1}"
-               loading="lazy"
-               onerror="this.src='data:image/svg+xml,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'400\\' height=\\'300\\'><rect width=\\'100%25\\' height=\\'100%25\\' fill=\\'%2318181f\\'/><text x=\\'50%25\\' y=\\'50%25\\' fill=\\'%236b6b88\\' text-anchor=\\'middle\\' dominant-baseline=\\'middle\\' font-size=\\'32\\'>✗</text></svg>'" />
+          ${mediaHTML(img.imageUrl, `Image ${idx + 1}`, "", "loading=\"lazy\"")}
         </div>
       `).join('');
     }
@@ -1993,17 +2021,49 @@
   }
 
   function closeFullscreen() {
+    const mediaEl = document.getElementById('fs-img');
+    if (mediaEl && mediaEl.tagName === 'VIDEO') mediaEl.pause();
     document.getElementById('fullscreen-viewer').classList.remove('open');
   }
 
   function renderFSImage() {
-    const img     = document.getElementById('fs-img');
+    const currentEl = document.getElementById('fs-img');
     const counter = document.getElementById('fs-counter');
+    const current = detailImages[fsIndex]?.imageUrl;
+    if (!currentEl || !current) return;
 
-    img.classList.add('fading');
+    currentEl.classList.add('fading');
     setTimeout(() => {
-      img.src = detailImages[fsIndex].imageUrl;
-      img.classList.remove('fading');
+      const latestEl = document.getElementById('fs-img');
+      if (!latestEl) return;
+
+      const needsVideo = isVideoUrl(current);
+      const hasVideo   = latestEl.tagName === 'VIDEO';
+      let mediaEl      = latestEl;
+
+      if (needsVideo !== hasVideo) {
+        if (hasVideo) latestEl.pause();
+        const replacement = document.createElement(needsVideo ? 'video' : 'img');
+        replacement.id = 'fs-img';
+        replacement.className = 'fading';
+        if (needsVideo) {
+          replacement.autoplay = true;
+          replacement.controls = true;
+          replacement.loop = true;
+          replacement.muted = true;
+          replacement.playsInline = true;
+        } else {
+          replacement.alt = 'fullscreen';
+        }
+        latestEl.replaceWith(replacement);
+        mediaEl = replacement;
+      }
+
+      mediaEl.src = current;
+      if (mediaEl.tagName === 'VIDEO') {
+        mediaEl.play().catch(() => {});
+      }
+      mediaEl.classList.remove('fading');
     }, 180);
 
     counter.textContent = `${fsIndex + 1} / ${detailImages.length}`;
@@ -2080,9 +2140,7 @@
     } else {
       imgList.innerHTML = imgs.map(img => `
         <div class="img-edit-row">
-          <img class="img-edit-thumb"
-               src="${escapeHTML(img.imageUrl)}"
-               onerror="this.style.background='var(--bg3)';this.removeAttribute('src')" />
+          ${mediaHTML(img.imageUrl, "thumb", "img-edit-thumb", "")}
           <span class="img-edit-url">${escapeHTML(img.imageUrl)}</span>
           <button class="edit-btn edit-btn-red" style="font-size:0.6rem;padding:0.2rem 0.5rem;"
                   onclick="removeImage(${img.id})">✕</button>
@@ -2160,6 +2218,31 @@
     showToast(`✦ ${urls.length} image${urls.length > 1 ? 's' : ''} added`);
   }
 
+
+  async function uploadPortraitFile(event) {
+    if (!selectedCharId) return showToast('⚠ Select a character first');
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const dataUrl = await readFileAsDataURL(file);
+    document.getElementById('edit-char-portrait').value = dataUrl;
+    event.target.value = '';
+    showToast('✦ Portrait media loaded. Click SAVE to apply.');
+  }
+
+  async function uploadGalleryFiles(event) {
+    if (!selectedCharId) return showToast('⚠ Select a character first');
+    const files = Array.from(event.target.files || []);
+    if (!files.length) return;
+    for (const file of files) {
+      const dataUrl = await readFileAsDataURL(file);
+      await addImageToDB(selectedCharId, dataUrl);
+    }
+    event.target.value = '';
+    await refreshData();
+    await renderEditSelectedChar();
+    showToast(`✦ ${files.length} file${files.length > 1 ? 's' : ''} uploaded`);
+  }
+
   async function removeImage(imageId) {
     await deleteImageFromDB(imageId);
     await refreshData();
@@ -2190,6 +2273,27 @@
   /* ══════════════════════════════════════════════════════════════════════════
      Utilities
   ══════════════════════════════════════════════════════════════════════════ */
+
+  function isVideoUrl(url) {
+    const u = String(url || '').toLowerCase();
+    return u.startsWith('data:video/') || u.includes('.mp4') || u.includes('video/mp4');
+  }
+
+  function mediaHTML(url, alt, cls, extra = '') {
+    if (isVideoUrl(url)) {
+      return `<video src="${escapeHTML(url)}" class="${cls}" ${extra} muted loop playsinline preload="metadata"></video>`;
+    }
+    return `<img src="${escapeHTML(url)}" alt="${escapeHTML(alt)}" class="${cls}" ${extra} />`;
+  }
+
+  function readFileAsDataURL(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error || new Error('Failed to read file'));
+      reader.readAsDataURL(file);
+    });
+  }
 
   function escapeHTML(str) {
     return String(str ?? '')
@@ -2316,7 +2420,19 @@
     cropScale  = char.portraitScale   ?? 1.0;
 
     document.getElementById('crop-char-label').textContent = char.name.toUpperCase();
-    document.getElementById('crop-preview-img').src = char.portraitUrl;
+    const previewImg = document.getElementById('crop-preview-img');
+    const previewVid = document.getElementById('crop-preview-video');
+    if (isVideoUrl(char.portraitUrl)) {
+      previewImg.style.display = 'none';
+      previewVid.style.display = 'block';
+      previewVid.src = char.portraitUrl;
+      previewVid.play().catch(() => {});
+    } else {
+      previewVid.style.display = 'none';
+      previewVid.pause();
+      previewImg.style.display = 'block';
+      previewImg.src = char.portraitUrl;
+    }
     syncCropUI();
 
     document.getElementById('crop-modal').classList.add('open');
@@ -2339,10 +2455,12 @@
   }
 
   function applyCropToPreview() {
-    const img = document.getElementById('crop-preview-img');
-    img.style.objectPosition = cropOX + '% ' + cropOY + '%';
-    img.style.transform      = 'scale(' + cropScale + ')';
-    img.style.transformOrigin = cropOX + '% ' + cropOY + '%';
+    const target = document.getElementById('crop-preview-video').style.display !== 'none'
+      ? document.getElementById('crop-preview-video')
+      : document.getElementById('crop-preview-img');
+    target.style.objectPosition = cropOX + '% ' + cropOY + '%';
+    target.style.transform      = 'scale(' + cropScale + ')';
+    target.style.transformOrigin = cropOX + '% ' + cropOY + '%';
   }
 
   function cropUpdateFromSliders() {
