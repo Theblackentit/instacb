@@ -1524,6 +1524,7 @@
     <div class="char-choice-popup">
       <div class="choice-portrait-wrap">
         <img id="choice-portrait" class="choice-portrait" src="" alt="" />
+        <video id="choice-portrait-video" class="choice-portrait" muted loop playsinline style="display:none;"></video>
       </div>
       <div id="choice-char-name" class="choice-char-name">CHARACTER</div>
       <div id="choice-char-sub" class="choice-subtitle">0 IMAGES</div>
@@ -1886,12 +1887,12 @@
     const sc    = char.portraitScale   ?? 1;
     return `
       <div class="char-card" onclick="openCharChoiceModal(${char.id})" title="${escapeHTML(char.name)}">
-        <img src="${escapeHTML(char.portraitUrl)}"
-             alt="${escapeHTML(char.name)}"
-             loading="lazy"
-             class="card-portrait"
-             style="object-position:${ox}% ${oy}%;transform:scale(${sc});transform-origin:${ox}% ${oy}%;"
-             onerror="this.src='data:image/svg+xml,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'400\\' height=\\'600\\'><rect width=\\'100%25\\' height=\\'100%25\\' fill=\\'%2318181f\\'/><text x=\\'50%25\\' y=\\'50%25\\' fill=\\'%236b6b88\\' text-anchor=\\'middle\\' dominant-baseline=\\'middle\\' font-size=\\'48\\'>?</text></svg>'" />
+        ${mediaHTML(
+          char.portraitUrl,
+          char.name,
+          "card-portrait",
+          `loading="lazy" style="object-position:${ox}% ${oy}%;transform:scale(${sc});transform-origin:${ox}% ${oy}%;" autoplay muted loop playsinline`
+        )}
         <div class="char-card-overlay">
           <div class="char-card-name">${escapeHTML(char.name)}</div>
           <div class="char-card-count">${count} IMAGE${count !== 1 ? 'S' : ''}</div>
@@ -1916,11 +1917,25 @@
     const oy = char.portraitOffsetY ?? 20;
     const sc = char.portraitScale   ?? 1;
 
-    const portEl = document.getElementById('choice-portrait');
-    portEl.src = char.portraitUrl;
-    portEl.style.objectPosition  = `${ox}% ${oy}%`;
-    portEl.style.transform       = `scale(${sc})`;
-    portEl.style.transformOrigin = `${ox}% ${oy}%`;
+    const portImg = document.getElementById('choice-portrait');
+    const portVid = document.getElementById('choice-portrait-video');
+    if (isVideoUrl(char.portraitUrl)) {
+      portImg.style.display = 'none';
+      portVid.style.display = 'block';
+      portVid.src = char.portraitUrl;
+      portVid.style.objectPosition  = `${ox}% ${oy}%`;
+      portVid.style.transform       = `scale(${sc})`;
+      portVid.style.transformOrigin = `${ox}% ${oy}%`;
+      portVid.play().catch(() => {});
+    } else {
+      portVid.style.display = 'none';
+      portVid.pause();
+      portImg.style.display = 'block';
+      portImg.src = char.portraitUrl;
+      portImg.style.objectPosition  = `${ox}% ${oy}%`;
+      portImg.style.transform       = `scale(${sc})`;
+      portImg.style.transformOrigin = `${ox}% ${oy}%`;
+    }
 
     document.getElementById('choice-char-name').textContent = char.name.toUpperCase();
 
@@ -1935,6 +1950,8 @@
   function closeCharChoice() {
     document.getElementById('char-choice-overlay').classList.remove('open');
     document.body.style.overflow = '';
+    const portVid = document.getElementById('choice-portrait-video');
+    portVid.pause();
     choiceCharId = null;
   }
 
